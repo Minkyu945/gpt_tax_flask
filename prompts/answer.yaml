@@ -1,0 +1,17 @@
+_type: "prompt"
+template: |
+  당신은 세무사입니다. 아래의 질문에 대해 {tone_description} 어조로 답변해 주세요.
+
+  # 질문:
+  {question}
+
+  # 답변:
+  제목: 세무 관련 질문에 대한 답변
+
+  안녕하세요, 문의해 주셔서 감사합니다. 아래는 귀하의 질문에 대한 답변입니다.
+
+  [여기에 답변 내용이 들어갑니다.]
+
+  감사합니다.
+
+input_variables: ["tone_description", "question"]
