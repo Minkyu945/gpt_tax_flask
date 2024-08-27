@@ -81,7 +81,7 @@ def analyze_retirement_clause(retirement_clause, re_summary_input=""):
     prompt_messages = [
         (
             "system",
-            "당신은 법률 전문가입니다. 아래 텍스트에서 임원 퇴직급여에 대한 구체적인 지급 규정이 포함되어 있는지 판단해 주세요.",
+            "당신은 법률 전문가입니다. 아래 텍스트는 정관 파일에서 임원 퇴직금 관련한 텍스트를 추출한 것이다. 임원 퇴직급여에 대한 구체적인 지급 규정이 포함되어 있는지 판단해 주세요. 오로지 정관에만 임원 퇴직 급여에 대한 구체적 규정이 있어야 한다. 정관에 없다면 잘못된 것이다.",
         ),
         ("user", f"퇴직금 관련 조항: {retirement_clause}"),
     ]
@@ -97,7 +97,10 @@ def analyze_retirement_clause(retirement_clause, re_summary_input=""):
     return response
 
 
-def generate_consulting_email(analysis_result):
+def generate_consulting_email(analysis_result, retirement_payment):
+    formatted_payment = (
+        f"{retirement_payment:,.0f}"  # 소수점 제거하고 천 단위로 쉼표 추가
+    )
     llm = ChatOpenAI(
         model_name="gpt-4o", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY")
     )
@@ -107,9 +110,12 @@ def generate_consulting_email(analysis_result):
         [
             (
                 "system",
-                "당신은 이메일 작성 전문가입니다. 다음 분석 결과를 바탕으로 고객에게 보낼 컨설팅 이메일을 반드시 한국어로 작성해 주세요.",
+                "당신은 세무 이메일 작성 전문가입니다. 다음 분석 결과와 퇴직금 계산 결과를 바탕으로 고객에게 보낼 컨설팅 이메일을 반드시 한국어로 작성해 주세요. 양식은 다음과 같습니다. 1. 현재 정관 상태, 2. 정관에서의 퇴직금 규정의 중요성, 3. 예상 퇴직금 규모, 4. 정관컨설팅의 필요성 및 기대효과, 5. 컨설팅 추천",
             ),
-            ("user", f"분석 결과: {analysis_result}"),
+            (
+                "user",
+                f"분석 결과: {analysis_result}\n퇴직금 계산 결과: {formatted_payment}만원",
+            ),
         ]
     )
 
@@ -229,13 +235,12 @@ def test():
     # 새로운 메시지 추가
     history.append(
         SystemMessage(
-            content="당신은 친절한 세무사 어시스턴트입니다. 고객 질문에 대하여 어조에 알맞게 답변을 하십시오."
+            content="당신은 친절한 리치디바인 세무사 어시스턴트입니다. 고객 질문에 대하여 어조에 알맞게 답변을 하십시오."
         )
     )
     history.append(HumanMessage(content=f"어조: {tone_description}"))
     history.append(HumanMessage(content=f"고객 질문: {topic}"))
 
-    # 대화 상태 저장 (최대 3개의 최신 메시지만 유지)
     conversation_states[conversation_id] = history[-12:]
 
     # LLM 호출 및 응답 생성
@@ -406,6 +411,8 @@ def upload():
         return jsonify({"error": "No file uploaded"}), 400
 
     file = request.files["file"]
+    monthly_salary = request.form.get("monthly_salary", type=float)
+    days_of_service = request.form.get("days_of_service", type=float)
     re_summary_input = request.form.get("re_summary_input", "")  # 추가: 재분석 입력값
 
     if file.filename.endswith(".pdf"):
@@ -416,20 +423,27 @@ def upload():
         return jsonify({"error": "Unsupported file type"}), 400
 
     retirement_clause = extract_retirement_clause(company_info)
-    analysis_result = analyze_retirement_clause(
-        retirement_clause, re_summary_input
-    )  # 수정: 재분석 입력값 전달
+    analysis_result = analyze_retirement_clause(retirement_clause, re_summary_input)
+    retirement_payment = calculate_retirement_payment(monthly_salary, days_of_service)
 
-    email_template = generate_consulting_email(analysis_result)
+    email_template = generate_consulting_email(analysis_result, retirement_payment)
 
     return jsonify(
         {
             "company_info": company_info,
             "retirement_clause": retirement_clause,
             "analysis_result": analysis_result,
+            "retirement_payment": retirement_payment,
             "email_template": email_template,
         }
     )
+
+
+def calculate_retirement_payment(monthly_salary, days_of_service):
+    # 퇴직금 계산
+    retirement_payment = monthly_salary * (days_of_service / 365)
+
+    return retirement_payment
 
 
 @app.route("/api/send-email", methods=["POST"])
@@ -480,6 +494,117 @@ def send_email():
     except Exception as e:
         logger.error(f"Error sending email: {e}")
         return jsonify({"error": "Failed to send email"}), 500
+
+
+# GPT-4를 사용하여 응답 생성
+def generate_gpt_response(comparison_report, re_summary_input=None):
+    llm = ChatOpenAI(
+        model_name="gpt-4o", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY")
+    )
+    output_parser = StrOutputParser()
+
+    # Prepare prompt messages
+    prompt_messages = [
+        (
+            "system",
+            "당신은 미수금 관리 전문가입니다. 다음 데이터를 바탕으로 미수금 독촉이 필요한 회사를 판단하고, 회사명, 이메일과 독촉이 필요한 이유를 '회사명 : 이메일 : 이유' 형식으로 명확히 나열하세요.",
+        ),
+        ("user", f"미수금 데이터: {comparison_report}"),
+    ]
+
+    if re_summary_input:
+        prompt_messages.append(("user", f"추가 요청 사항: {re_summary_input}"))
+
+    prompt = ChatPromptTemplate.from_messages(prompt_messages)
+    chain = prompt | llm | output_parser
+    response = chain.invoke({})
+
+    # 결과를 파싱해서 JSON 형식으로 변환
+    lines = response.split("\n")
+    results = []
+    for line in lines:
+        if ": " in line:
+            parts = line.split(": ")
+            if len(parts) == 3:
+                company, email, reason = parts
+                results.append(
+                    {
+                        "company": company.strip(),
+                        "email": email.strip(),
+                        "reason": reason.strip(),
+                    }
+                )
+
+    return results
+
+
+# 엑셀 데이터를 비교하는 함수
+def compare_excel_files(prev_df, curr_df):
+    report = []
+
+    for company in prev_df.index:
+        if company in curr_df.index:
+            prev_row = prev_df.loc[company]
+            curr_row = curr_df.loc[company]
+
+            prev_balance = prev_row["잔액"]
+            curr_balance = curr_row["잔액"]
+            prev_debit = prev_row["차변"]
+            curr_debit = curr_row["차변"]
+            prev_credit = prev_row["대변"]
+            curr_credit = curr_row["대변"]
+            email = curr_row["이메일"]
+
+            if (
+                curr_balance == prev_balance
+                and curr_debit == prev_debit
+                and curr_credit == prev_credit
+            ):
+                report.append(
+                    f"{company}: {email}: 잔액, 차변, 대변 모두 변동이 없으므로 독촉이 필요하지 않습니다."
+                )
+            elif curr_debit > prev_debit and curr_credit > prev_credit:
+                report.append(
+                    f"{company}: {email}: 매출 발생과 변제가 동시에 이루어졌으므로 독촉이 필요하지 않습니다."
+                )
+            elif curr_balance == prev_balance:
+                report.append(
+                    f"{company}: {email}: 잔액이 변동하지 않았으므로 독촉이 필요합니다."
+                )
+            elif curr_debit > prev_debit and curr_credit == prev_credit:
+                report.append(
+                    f"{company}: {email}: 매출이 증가했으나 변제가 이루어지지 않았으므로 독촉이 필요합니다."
+                )
+            else:
+                report.append(
+                    f"{company}: {email}: 거래가 중단된 상태이거나 변제가 이루어지지 않았으므로 독촉이 필요합니다."
+                )
+        else:
+            email = prev_df.loc[company, "이메일"]
+            report.append(
+                f"{company}: {email}: 현재 데이터에서 찾을 수 없습니다. 거래가 중단되었을 수 있습니다."
+            )
+
+    return "\n".join(report)
+
+
+# 엑셀 파일 비교 후 GPT-4를 통해 설명 생성
+@app.route("/api/compare", methods=["POST"])
+def compare():
+    try:
+        prev_file = request.files["previousMonthFile"]
+        curr_file = request.files["currentMonthFile"]
+
+        prev_df = pd.read_excel(prev_file, index_col="거래처")
+        curr_df = pd.read_excel(curr_file, index_col="거래처")
+
+        comparison_report = compare_excel_files(prev_df, curr_df)
+        gpt_response = generate_gpt_response(comparison_report)
+
+        return jsonify({"report": comparison_report, "gpt_response": gpt_response})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
