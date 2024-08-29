@@ -24,8 +24,8 @@ from email.header import Header  # Header 모듈 임포트
 # 환경 변수 로드
 load_dotenv()
 
-app = Flask(__name__)
-CORS(app)
+application = Flask(__name__)
+CORS(application)
 
 # 204 응답에 대한 로그를 비활성화하기 위한 로거 설정
 log = logging.getLogger("werkzeug")
@@ -43,7 +43,7 @@ logger.addHandler(ch)
 conversation_states = {}
 
 
-@app.before_request
+@application.before_request
 def before_request():
     if request.path.startswith("/socket.io"):
         return "", 204
@@ -192,7 +192,7 @@ def create_email_content(summary):
     return response
 
 
-@app.route("/api/summarize", methods=["POST"])
+@application.route("/api/summarize", methods=["POST"])
 def summarize():
     data = request.json
     url = data.get("url")
@@ -211,7 +211,7 @@ def summarize():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/test", methods=["POST"])
+@application.route("/api/test", methods=["POST"])
 def test():
     data = request.json
     conversation_id = data.get("conversation_id")
@@ -261,7 +261,7 @@ def test():
     return jsonify({"answer": ai_message.content, "conversation_id": conversation_id})
 
 
-@app.route("/api/ask", methods=["POST"])
+@application.route("/api/ask", methods=["POST"])
 def ask():
     data = request.json
     conversation_id = data.get("conversation_id")
@@ -405,7 +405,7 @@ def ask():
         return jsonify({"answer": ai_answer, "conversation_id": conversation_id})
 
 
-@app.route("/api/upload", methods=["POST"])
+@application.route("/api/upload", methods=["POST"])
 def upload():
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
@@ -446,7 +446,7 @@ def calculate_retirement_payment(monthly_salary, days_of_service):
     return retirement_payment
 
 
-@app.route("/api/send-email", methods=["POST"])
+@application.route("/api/send-email", methods=["POST"])
 def send_email():
     data = request.json
     to_email = data.get("to")
@@ -589,7 +589,7 @@ def compare_excel_files(prev_df, curr_df):
 
 
 # 엑셀 파일 비교 후 GPT-4를 통해 설명 생성
-@app.route("/api/compare", methods=["POST"])
+@application.route("/api/compare", methods=["POST"])
 def compare():
     try:
         prev_file = request.files["previousMonthFile"]
@@ -608,4 +608,4 @@ def compare():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    application.run(debug=True)
